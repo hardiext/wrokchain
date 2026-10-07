@@ -8,16 +8,37 @@
     "start": "next start"
   },
   "dependencies": {
+    "@rainbow-me/rainbowkit": "^2.2.11",
+    "@solana/sysvars": "^8.4.0",
+    "@tanstack/react-query": "^5.104.1",
+    "@x402/core": "^2.28.0",
+    "@x402/evm": "^2.28.0",
+    "@x402/svm": "^2.28.0",
+    "lucide-react": "^1.52.0",
     "next": "16.3.8",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "viem": "^2.57.3",
+    "wagmi": "^2.19.5"
   },
   "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "^4.2.0",
+    "@nomicfoundation/hardhat-ignition": "^3.1.8",
+    "@nomicfoundation/hardhat-toolbox-mocha-ethers": "^4.0.0",
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/chai": "^5.2.3",
+    "@types/chai-as-promised": "^8.0.2",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.20.5",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "chai": "^6.3.0",
+    "ethers": "^6.17.0",
+    "forge-std": "github:foundry-rs/forge-std#v1.16.2",
+    "hardhat": "^3.18.1",
+    "mocha": "^12.0.3",
     "tailwindcss": "^4",
-    "typescript": "^5"
-  }
+    "typescript": "~6.0.3"
+  },
+  "type": "module"
 }
