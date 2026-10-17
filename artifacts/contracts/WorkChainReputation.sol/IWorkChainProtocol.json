@@ -1,0 +1,83 @@
+{
+  "_format": "hh3-artifact-1",
+  "contractName": "IWorkChainProtocol",
+  "sourceName": "contracts/WorkChainReputation.sol",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "id",
+          "type": "uint256"
+        }
+      ],
+      "name": "agreements",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "client",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "worker",
+          "type": "address"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "termsHash",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "uint256",
+          "name": "offerExpiry",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint8",
+          "name": "status",
+          "type": "uint8"
+        },
+        {
+          "internalType": "uint8",
+          "name": "cancelReason",
+          "type": "uint8"
+        },
+        {
+          "internalType": "uint8",
+          "name": "currentMilestone",
+          "type": "uint8"
+        },
+        {
+          "internalType": "uint8",
+          "name": "milestoneCount",
+          "type": "uint8"
+        },
+        {
+          "internalType": "uint256",
+          "name": "acceptedAt",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "completedAt",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "cancelledAt",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x",
+  "deployedBytecode": "0x",
+  "linkReferences": {},
+  "deployedLinkReferences": {},
+  "immutableReferences": {},
+  "inputSourceName": "project/contracts/WorkChainReputation.sol",
+  "buildInfoId": "solc-0_8_24-39fb9fbfb1c56ba96f2fa081493f8f43ebf8d95f"
+}

@@ -1,38 +1,47 @@
-import hardhatToolboxMochaEthersPlugin from "@nomicfoundation/hardhat-toolbox-mocha-ethers";
-import { configVariable, defineConfig } from "hardhat/config";
+import { defineConfig } from "hardhat/config";
 
 export default defineConfig({
-  plugins: [hardhatToolboxMochaEthersPlugin],
+  plugins: [],
   solidity: {
     profiles: {
       default: {
-        version: "0.8.34",
+        compilers: [
+          {
+            version: "0.8.24",
+            settings: {
+              evmVersion: "cancun", 
+              viaIR: true,
+              optimizer: {
+                enabled: true,
+                runs: 200,
+              },
+            },
+          },
+        ],
       },
       production: {
-        version: "0.8.34",
-        settings: {
-          optimizer: {
-            enabled: true,
-            runs: 200,
+        compilers: [
+          {
+            version: "0.8.24",
+            settings: {
+              evmVersion: "cancun",
+              viaIR: true,
+              optimizer: {
+                enabled: true,
+                runs: 200,
+              },
+            },
           },
-        },
+        ],
       },
     },
   },
   networks: {
-    hardhatMainnet: {
-      type: "edr-simulated",
-      chainType: "l1",
-    },
-    hardhatOp: {
-      type: "edr-simulated",
-      chainType: "op",
-    },
     sepolia: {
       type: "http",
       chainType: "l1",
-      url: configVariable("SEPOLIA_RPC_URL"),
-      accounts: [configVariable("SEPOLIA_PRIVATE_KEY")],
+      url: process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL || "https://rpc.sepolia.org",
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
     },
   },
 });

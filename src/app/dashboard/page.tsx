@@ -1,348 +1,251 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useAccount, useReadContract, usePublicClient } from "wagmi";
-import { formatEther } from "viem";
-import { 
-  ArrowLeft, 
-  ArrowRight, 
-  FolderKanban, 
-  Briefcase, 
-  User, 
-  Loader2, 
-  Plus, 
-  Clock, 
-  CheckCircle2, 
-  AlertTriangle,
-  RotateCw
-} from "lucide-react";
+import { useAccount } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { WORKCHAIN_ABI } from "@/constants/ABI";
-
-interface ProjectItem {
-  id: bigint;
-  client: string;
-  worker: string;
-  agreementHash: string;
-  totalBudget: bigint;
-  milestoneCount: number;
-  status: number;
-  workerAccepted: boolean;
-  createdAt: number;
-  completedAt: number;
-}
+import {
+  ArrowLeft,
+  Plus,
+  Layers,
+  ArrowUpRight,
+  Loader2,
+  AlertCircle,
+  Briefcase,
+  UserCheck,
+  CheckCircle2,
+  Clock,
+  Sparkles,
+} from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
 export default function DashboardPage() {
   const { address, isConnected } = useAccount();
-  const publicClient = usePublicClient();
-  const contractAddress = (process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || "0xDD33AAFbD7bA98FCdA5b04677Ffd0A534c1880e7") as `0x${string}`;
+  const [role, setRole] = useState<"client" | "worker">("client");
+  const [agreements, setAgreements] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const [activeTab, setActiveTab] = useState<"all" | "client" | "worker">("all");
-  const [projects, setProjects] = useState<ProjectItem[]>([]);
-  const [isLoadingList, setIsLoadingList] = useState(false);
+  const currentWallet = address?.toLowerCase() || "";
 
-  // 1. Baca total proyek dari smart contract
-  const { data: counterData, refetch: refetchCounter } = useReadContract({
-    address: contractAddress,
-    abi: WORKCHAIN_ABI,
-    functionName: "projectCounter",
-  });
-
-  // 2. Tarik daftar proyek milik akun yang terhubung
-  const fetchUserProjects = useCallback(async () => {
-    if (!publicClient || !address) {
-      setProjects([]);
+  useEffect(() => {
+    if (!currentWallet) {
+      setAgreements([]);
+      setLoading(false);
       return;
     }
 
-    setIsLoadingList(true);
-
-    try {
-      // Jika counter terbaca gunakan nilai counter, jika tidak gunakan batas aman 20 ID
-      const totalCount = counterData ? Number(counterData) : 20;
-      const scanLimit = Math.max(totalCount, 5);
-
-      const calls = [];
-      for (let i = 1; i <= scanLimit; i++) {
-        calls.push(
-          publicClient.readContract({
-            address: contractAddress,
-            abi: WORKCHAIN_ABI,
-            functionName: "projects",
-            args: [BigInt(i)],
-          }).catch(() => null)
-        );
-      }
-
-      const results = await Promise.all(calls);
-      const userProjects: ProjectItem[] = [];
-
-      results.forEach((res: any, idx: number) => {
-        if (!res) return;
-
-        // Parsing data (baik bentuk named object maupun array tuple)
-        const id = res.id ?? res[0] ?? BigInt(idx + 1);
-        const client = (res.client ?? res[1] ?? "").toString();
-        const worker = (res.worker ?? res[2] ?? "").toString();
-        const agreementHash = (res.agreementHash ?? res[3] ?? "").toString();
-        const totalBudget = res.totalBudget ?? res[4] ?? BigInt(0);
-        const milestoneCount = Number(res.milestoneCount ?? res[5] ?? 0);
-        const status = Number(res.status ?? res[6] ?? 0);
-        const workerAccepted = Boolean(res.workerAccepted ?? res[7] ?? false);
-        const createdAt = Number(res.createdAt ?? res[8] ?? 0);
-        const completedAt = Number(res.completedAt ?? res[9] ?? 0);
-
-        // Abaikan data kosong
-        if (!client || client.toLowerCase() === "0x0000000000000000000000000000000000000000") return;
-
-        const clientAddr = client.toLowerCase();
-        const workerAddr = worker.toLowerCase();
-        const currentAddr = address.toLowerCase();
-
-        // Cek keterlibatan dompet
-        if (clientAddr === currentAddr || workerAddr === currentAddr) {
-          userProjects.push({
-            id,
-            client,
-            worker,
-            agreementHash,
-            totalBudget,
-            milestoneCount,
-            status,
-            workerAccepted,
-            createdAt,
-            completedAt,
-          });
+    const fetchAgreements = async () => {
+      setLoading(true);
+      try {
+        const query = supabase.from("agreements").select("*");
+        if (role === "client") {
+          query.eq("client_address", currentWallet);
+        } else {
+          query.eq("worker_address", currentWallet);
         }
-      });
 
-      // Urutkan dari ID terbesar (terbaru)
-      setProjects(userProjects.sort((a, b) => Number(b.id - a.id)));
-    } catch (err) {
-      console.error("Gagal menarik data proyek di dashboard:", err);
-    } finally {
-      setIsLoadingList(false);
-    }
-  }, [counterData, publicClient, address, contractAddress]);
+        const { data, error } = await query.order("created_at", { ascending: false });
+        if (error) throw error;
+        setAgreements(data || []);
+      } catch (err) {
+        console.error("Gagal mengambil data dashboard:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  useEffect(() => {
-    fetchUserProjects();
-  }, [fetchUserProjects]);
+    fetchAgreements();
+  }, [currentWallet, role]);
 
-  const handleManualRefresh = () => {
-    refetchCounter();
-    fetchUserProjects();
-  };
-
-  const filteredProjects = projects.filter((p) => {
-    if (!address) return false;
-    const current = address.toLowerCase();
-    if (activeTab === "client") return p.client.toLowerCase() === current;
-    if (activeTab === "worker") return p.worker.toLowerCase() === current;
-    return true;
-  });
-
-  const getStatusBadge = (status: number) => {
-    switch (status) {
-      case 0:
-        return (
-          <span className="px-3 py-1 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center gap-1">
-            <Clock className="h-3 w-3" /> Menunggu Tanda Tangan
-          </span>
-        );
-      case 1:
-        return (
-          <span className="px-3 py-1 rounded-full text-[10px] font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/30 flex items-center gap-1">
-            <Clock className="h-3 w-3" /> Berjalan
-          </span>
-        );
-      case 2:
-        return (
-          <span className="px-3 py-1 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
-            <CheckCircle2 className="h-3 w-3" /> Selesai
-          </span>
-        );
-      case 3:
-        return (
-          <span className="px-3 py-1 rounded-full text-[10px] font-semibold bg-red-500/10 text-red-400 border border-red-500/30 flex items-center gap-1">
-            <AlertTriangle className="h-3 w-3" /> Sengketa (Dispute)
-          </span>
-        );
-      default:
-        return null;
-    }
-  };
+  const activeCount = agreements.filter((a) => a.status === "ACTIVE").length;
+  const pendingCount = agreements.filter((a) => a.status === "PENDING" || a.status === "ANCHORING").length;
 
   return (
-    <div className="min-h-screen bg-[#0d0e12] text-white selection:bg-indigo-600 font-sans">
-      {/* Header */}
-      <header className="w-full max-w-7xl mx-auto px-6 py-6 flex items-center justify-between border-b border-zinc-900">
-        <Link href="/" className="font-extrabold text-xl tracking-tight uppercase">
-          WORKCHAIN<span className="text-indigo-500">.</span>
-        </Link>
-        <div className="flex items-center gap-4">
-          <Link href="/" className="text-xs text-zinc-400 hover:text-white transition flex items-center gap-1.5">
-            <ArrowLeft className="h-3.5 w-3.5" /> Beranda
-          </Link>
-          <div className="scale-90 origin-right">
+    <div className="min-h-screen bg-[#08090c] text-white selection:bg-[#ff4625]/30 selection:text-white font-sans antialiased relative overflow-hidden pb-24">
+      {/* Ambient Lighting Gradients */}
+      <div className="pointer-events-none fixed top-[-10%] right-[10%] w-[500px] h-[500px] bg-gradient-to-br from-[#ff4625]/10 to-[#8b5cf6]/10 blur-[130px] rounded-full" />
+      <div className="pointer-events-none fixed bottom-[-10%] left-[-10%] w-[600px] h-[600px] bg-gradient-to-tr from-[#6366f1]/10 to-transparent blur-[150px] rounded-full" />
+
+      {/* Grid Pattern */}
+      <div
+        className="pointer-events-none fixed inset-0 opacity-[0.03]"
+        style={{
+          backgroundImage: `linear-gradient(#ffffff 1px, transparent 1px), linear-gradient(90deg, #ffffff 1px, transparent 1px)`,
+          backgroundSize: "40px 40px",
+        }}
+      />
+
+      {/* Top Header */}
+      <header className="sticky top-0 z-40 border-b border-white/[0.06] bg-[#08090c]/80 backdrop-blur-xl px-6 py-4">
+        <div className="max-w-6xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Link
+              href="/"
+              className="flex items-center gap-2 text-xs font-mono text-zinc-400 hover:text-white transition py-1 px-3 rounded-full bg-white/[0.03] border border-white/[0.06]"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              <span>BERANDA</span>
+            </Link>
+            <span className="text-zinc-700">/</span>
+            <span className="font-mono text-xs text-zinc-300 font-semibold tracking-wider uppercase">
+              WORKSPACE
+            </span>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Link
+              href="/create"
+              className="hidden sm:flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#ff4625] hover:bg-[#e03a1a] text-white font-mono text-xs font-bold shadow-lg shadow-[#ff4625]/20 transition"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>BUAT KESEPAKATAN</span>
+            </Link>
             <ConnectButton accountStatus="avatar" chainStatus="icon" />
           </div>
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-6 py-12">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 mb-10">
+      <main className="max-w-6xl mx-auto px-6 pt-10 space-y-8 relative z-10">
+        {/* Workspace Title & Role Switcher */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <span className="text-xs font-mono uppercase tracking-widest text-indigo-400 block mb-1">
-              Dasbor Portofolio
+            <span className="text-[10px] font-mono tracking-widest text-[#ff5733] uppercase">
+              PROTOCOL DASHBOARD
             </span>
-            <h1 className="text-3xl font-bold tracking-tight text-white">Daftar Kontrak Saya</h1>
-            <p className="text-sm text-zinc-400 mt-1">
-              Kelola seluruh proyek yang terikat dengan dompet on-chain Anda.
-            </p>
+            <h1 className="text-3xl font-extrabold tracking-tight text-white mt-1">
+              Manajemen Kesepakatan
+            </h1>
           </div>
 
-          <div className="flex items-center gap-3">
+          {/* Role Pill Switch */}
+          <div className="flex p-1 rounded-2xl bg-white/[0.04] border border-white/[0.08] self-start sm:self-auto">
             <button
-              onClick={handleManualRefresh}
-              disabled={isLoadingList}
-              className="p-2.5 rounded-full border border-zinc-800 bg-[#14151b] hover:bg-zinc-800 text-zinc-300 transition"
-              title="Refresh Data On-Chain"
+              onClick={() => setRole("client")}
+              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-mono font-bold transition ${
+                role === "client"
+                  ? "bg-[#ff4625] text-white shadow-lg shadow-[#ff4625]/20"
+                  : "text-zinc-400 hover:text-white"
+              }`}
             >
-              <RotateCw className={`h-4 w-4 ${isLoadingList ? "animate-spin text-indigo-400" : ""}`} />
+              <Briefcase className="h-3.5 w-3.5" />
+              <span>SEBAGAI KLIEN</span>
             </button>
-            <Link
-              href="/create"
-              className="px-6 py-3 rounded-full bg-[#5b50f6] hover:bg-[#4d42ec] text-white font-semibold text-xs transition shadow-lg shadow-indigo-600/25 inline-flex items-center gap-2"
+            <button
+              onClick={() => setRole("worker")}
+              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-mono font-bold transition ${
+                role === "worker"
+                  ? "bg-[#ff4625] text-white shadow-lg shadow-[#ff4625]/20"
+                  : "text-zinc-400 hover:text-white"
+              }`}
             >
-              <Plus className="h-4 w-4" /> Inisiasi Kontrak Baru
-            </Link>
+              <UserCheck className="h-3.5 w-3.5" />
+              <span>SEBAGAI WORKER</span>
+            </button>
           </div>
         </div>
 
-        {/* Tab Filter */}
-        <div className="flex items-center gap-2 border-b border-zinc-900 pb-4 mb-8 text-xs font-semibold">
-          <button
-            onClick={() => setActiveTab("all")}
-            className={`px-4 py-2 rounded-full transition ${
-              activeTab === "all" ? "bg-white text-zinc-950" : "text-zinc-400 hover:text-white"
-            }`}
-          >
-            Semua ({projects.length})
-          </button>
-          <button
-            onClick={() => setActiveTab("client")}
-            className={`px-4 py-2 rounded-full transition ${
-              activeTab === "client" ? "bg-white text-zinc-950" : "text-zinc-400 hover:text-white"
-            }`}
-          >
-            Sebagai Klien ({projects.filter((p) => p.client.toLowerCase() === address?.toLowerCase()).length})
-          </button>
-          <button
-            onClick={() => setActiveTab("worker")}
-            className={`px-4 py-2 rounded-full transition ${
-              activeTab === "worker" ? "bg-white text-zinc-950" : "text-zinc-400 hover:text-white"
-            }`}
-          >
-            Sebagai Worker ({projects.filter((p) => p.worker.toLowerCase() === address?.toLowerCase()).length})
-          </button>
+        {/* Metric Cards Strip */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="p-6 rounded-2xl bg-[#0e1017] border border-white/[0.06] space-y-1">
+            <span className="text-[10px] font-mono uppercase text-zinc-500 tracking-wider">
+              TOTAL KESEPAKATAN
+            </span>
+            <div className="text-2xl font-extrabold text-white font-mono">{agreements.length}</div>
+          </div>
+          <div className="p-6 rounded-2xl bg-[#0e1017] border border-white/[0.06] space-y-1">
+            <span className="text-[10px] font-mono uppercase text-emerald-400 tracking-wider">
+              AKTIF & BERJALAN
+            </span>
+            <div className="text-2xl font-extrabold text-emerald-400 font-mono">{activeCount}</div>
+          </div>
+          <div className="p-6 rounded-2xl bg-[#0e1017] border border-white/[0.06] space-y-1">
+            <span className="text-[10px] font-mono uppercase text-amber-400 tracking-wider">
+              MENUNGGU PROSES
+            </span>
+            <div className="text-2xl font-extrabold text-amber-400 font-mono">{pendingCount}</div>
+          </div>
         </div>
 
-        {/* State: Dompet Belum Konek */}
-        {!isConnected && (
-          <div className="p-12 bg-[#14151b] border border-zinc-800 rounded-3xl text-center max-w-md mx-auto space-y-4">
-            <FolderKanban className="h-10 w-10 text-zinc-500 mx-auto" />
+        {/* Content Section */}
+        {!isConnected ? (
+          <div className="p-12 rounded-3xl border border-white/[0.08] bg-[#0e1017] text-center space-y-4">
+            <AlertCircle className="h-10 w-10 text-zinc-600 mx-auto" />
             <h3 className="text-base font-bold text-white">Dompet Belum Terhubung</h3>
-            <p className="text-xs text-zinc-400 leading-relaxed">
-              Hubungkan wallet Web3 Anda untuk memuat daftar kontrak kerja.
+            <p className="text-xs text-zinc-400 max-w-sm mx-auto">
+              Hubungkan dompet Web3 MetaMask Anda untuk melihat daftar kontrak dan perjanjian kerja Anda.
             </p>
           </div>
-        )}
-
-        {/* State: Loading */}
-        {isConnected && isLoadingList && projects.length === 0 && (
-          <div className="py-20 flex flex-col items-center justify-center text-xs font-mono text-zinc-400">
-            <Loader2 className="h-6 w-6 animate-spin text-indigo-500 mb-3" />
-            <span>Memindai riwayat smart contract on-chain...</span>
+        ) : loading ? (
+          <div className="p-16 flex items-center justify-center gap-3 text-zinc-400">
+            <Loader2 className="h-5 w-5 animate-spin text-[#ff5733]" />
+            <span className="font-mono text-xs uppercase tracking-wider">Mengambil data kesepakatan...</span>
           </div>
-        )}
-
-        {/* State: Kosong */}
-        {isConnected && !isLoadingList && filteredProjects.length === 0 && (
-          <div className="p-12 bg-[#14151b] border border-zinc-800 rounded-3xl text-center max-w-md mx-auto space-y-4">
-            <FolderKanban className="h-10 w-10 text-zinc-500 mx-auto" />
-            <h3 className="text-base font-bold text-white">Belum Ada Kontrak</h3>
-            <p className="text-xs text-zinc-400 leading-relaxed">
-              Tidak ditemukan kontrak aktif yang melibatkan dompet ini pada kategori terpilih.
+        ) : agreements.length === 0 ? (
+          <div className="p-12 rounded-3xl border border-white/[0.08] bg-[#0e1017] text-center space-y-4">
+            <Layers className="h-10 w-10 text-zinc-600 mx-auto" />
+            <h3 className="text-base font-bold text-white">Belum Ada Kesepakatan</h3>
+            <p className="text-xs text-zinc-400 max-w-sm mx-auto">
+              {role === "client"
+                ? "Anda belum membuat kesepakatan kerja. Klik tombol di bawah untuk membuat kontrak pertama."
+                : "Belum ada kontrak yang menugaskan alamat dompet Anda sebagai worker."}
             </p>
-            <Link
-              href="/create"
-              className="inline-block px-5 py-2.5 rounded-full bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-semibold transition"
-            >
-              Mulai Buat Kesepakatan
-            </Link>
-          </div>
-        )}
-
-        {/* State: Daftar Kontrak Ditemukan */}
-        {isConnected && filteredProjects.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredProjects.map((proj) => {
-              const isUserClient = proj.client.toLowerCase() === address?.toLowerCase();
-              return (
-                <div
-                  key={proj.id.toString()}
-                  className="bg-[#14151b] border border-zinc-800 rounded-2xl p-5 flex flex-col justify-between hover:border-zinc-700 transition space-y-4"
+            {role === "client" && (
+              <div className="pt-2">
+                <Link
+                  href="/create"
+                  className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#ff4625] hover:bg-[#e03a1a] text-white font-mono text-xs font-bold shadow-lg shadow-[#ff4625]/20 transition"
                 >
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-mono text-zinc-500 font-bold">
-                        #{proj.id.toString()}
-                      </span>
-                      {getStatusBadge(proj.status)}
-                    </div>
-
-                    <div className="border-b border-zinc-800/80 pb-3">
-                      <div className="flex items-baseline justify-between">
-                        <span className="text-xs text-zinc-400">Total Escrow</span>
-                        <span className="text-lg font-bold font-mono text-white">
-                          {formatEther(proj.totalBudget)} ETH
-                        </span>
-                      </div>
-                      <span className="text-[11px] font-mono text-indigo-400 block mt-1">
-                        {proj.milestoneCount} Tahapan Deliverables
-                      </span>
-                    </div>
-
-                    <div className="space-y-1.5 text-[11px] font-mono text-zinc-400">
-                      <div className="flex items-center gap-1.5">
-                        <User className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
-                        <span className="text-zinc-500">Klien:</span>
-                        <span className="text-zinc-300 truncate">
-                          {isUserClient ? "Anda" : proj.client}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <Briefcase className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
-                        <span className="text-zinc-500">Worker:</span>
-                        <span className="text-zinc-300 truncate">
-                          {!isUserClient ? "Anda" : proj.worker}
-                        </span>
-                      </div>
-                    </div>
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>BUAT KESEPAKATAN</span>
+                </Link>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {agreements.map((a) => (
+              <Link
+                key={a.id}
+                href={`/project/${a.id}`}
+                className="group block p-6 rounded-2xl bg-[#0e1017] border border-white/[0.06] hover:border-[#ff5733]/40 transition space-y-4 shadow-xl hover:shadow-2xl hover:shadow-[#ff5733]/5"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider block">
+                      ID: {a.id.slice(0, 8)}...
+                    </span>
+                    <h3 className="text-base font-bold text-white group-hover:text-[#ff5733] transition line-clamp-1">
+                      {a.title}
+                    </h3>
                   </div>
 
-                  <Link
-                    href={`/project/${proj.id.toString()}`}
-                    className="w-full py-2.5 rounded-full bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-white font-semibold text-xs transition flex items-center justify-center gap-2"
+                  <span
+                    className={`px-2.5 py-1 rounded text-[10px] font-mono uppercase font-semibold ${
+                      a.status === "ACTIVE"
+                        ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-300"
+                        : a.status === "COMPLETED"
+                        ? "bg-indigo-500/10 border border-indigo-500/30 text-indigo-300"
+                        : "bg-amber-500/10 border border-amber-500/30 text-amber-300"
+                    }`}
                   >
-                    Buka Rincian Kontrak <ArrowRight className="h-3.5 w-3.5" />
-                  </Link>
+                    {a.status}
+                  </span>
                 </div>
-              );
-            })}
+
+                <p className="text-xs text-zinc-400 line-clamp-2 leading-relaxed">
+                  {a.description}
+                </p>
+
+                <div className="pt-2 border-t border-white/[0.04] flex items-center justify-between text-xs font-mono">
+                  <span className="text-zinc-500 truncate max-w-[200px]">
+                    {role === "client" ? `Worker: ${a.worker_address.slice(0, 10)}...` : `Klien: ${a.client_address.slice(0, 10)}...`}
+                  </span>
+                  <span className="flex items-center gap-1 text-[#ff5733] group-hover:translate-x-1 transition">
+                    RINCIAN <ArrowUpRight className="h-3.5 w-3.5" />
+                  </span>
+                </div>
+              </Link>
+            ))}
           </div>
         )}
       </main>
