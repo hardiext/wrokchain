@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, Suspense } from "react";
+import { useState, Suspense, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAccount, useWriteContract, usePublicClient } from "wagmi";
@@ -13,12 +13,62 @@ import {
   AlertCircle,
   Briefcase,
   Layers,
-  Sparkles,
+  FileSignature,
+  Wallet,
+  CalendarClock,
+  Coins,
+  ShieldCheck,
 } from "lucide-react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { WORKCHAIN_ABI } from "@/constants/ABI";
 import { supabase } from "@/lib/supabase";
 import { canonicalizeJson, hashCanonical } from "@/lib/canonical";
+
+interface Milestone {
+  title: string;
+  description: string;
+  amount: number;
+  days: number;
+}
+
+interface AgreementCreatedArgs {
+  agreementId?: bigint;
+  id?: bigint;
+  _id?: bigint;
+}
+
+const MAX_MILESTONES = 10;
+
+const inputClass =
+  "w-full rounded-xl border border-white/[0.08] bg-white/[0.02] px-4 py-2.5 text-sm text-white placeholder:text-zinc-600 transition focus:border-[#34d399]/60 focus:bg-white/[0.04] focus:outline-none focus:ring-1 focus:ring-[#34d399]/30";
+
+const getErrorMessage = (err: unknown): string => {
+  if (typeof err === "object" && err !== null) {
+    const { details, message } = err as { details?: string; message?: string };
+    return details || message || "Gagal membuat kesepakatan kerja.";
+  }
+  return "Gagal membuat kesepakatan kerja.";
+};
+
+function Field({
+  label,
+  icon,
+  children,
+}: {
+  label: string;
+  icon?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-zinc-400">
+        {icon}
+        {label}
+      </span>
+      {children}
+    </label>
+  );
+}
 
 function CreateAgreementForm() {
   const router = useRouter();
@@ -37,7 +87,7 @@ function CreateAgreementForm() {
   const [title, setTitle] = useState(initialTitle);
   const [description, setDescription] = useState("");
   const [offerDays, setOfferDays] = useState(7);
-  const [milestones, setMilestones] = useState([
+  const [milestones, setMilestones] = useState<Milestone[]>([
     {
       title: "Tahap 1: Analisis & Desain Solusi",
       description: "Rancangan arsitektur, wireframe, atau spesifikasi teknis",
@@ -59,8 +109,12 @@ function CreateAgreementForm() {
 
   const totalAmount = milestones.reduce((sum, m) => sum + (Number(m.amount) || 0), 0);
 
+  const updateMilestone = (idx: number, patch: Partial<Milestone>) => {
+    setMilestones((prev) => prev.map((m, i) => (i === idx ? { ...m, ...patch } : m)));
+  };
+
   const addMilestone = () => {
-    if (milestones.length >= 10) return;
+    if (milestones.length >= MAX_MILESTONES) return;
     setMilestones([
       ...milestones,
       {
@@ -97,7 +151,6 @@ function CreateAgreementForm() {
     setIsLoading(true);
 
     try {
-      // 1. Validasi identitas user klien di Supabase
       setLoadingStep("Memvalidasi identitas pengguna...");
       let { data: clientUser, error: errSelectUser } = await supabase
         .from("users")
@@ -121,7 +174,6 @@ function CreateAgreementForm() {
         clientUser = newUser;
       }
 
-      // 2. Ambil deployment protokol aktif
       setLoadingStep("Memeriksa deployment protokol...");
       const { data: deployment, error: errDeploy } = await supabase
         .from("contract_deployments")
@@ -134,7 +186,6 @@ function CreateAgreementForm() {
         throw new Error("Kontrak aktif tidak ditemukan di tabel contract_deployments.");
       }
 
-      // 3. Bentuk RFC 8785 Canonical JSON & Keccak Hash
       setLoadingStep("Menghitung cryptographic terms hash...");
       const salt = toHex(crypto.getRandomValues(new Uint8Array(32)));
       const offerExpiryDate = new Date(Date.now() + offerDays * 86400 * 1000).toISOString();
@@ -146,7 +197,7 @@ function CreateAgreementForm() {
         client: address.toLowerCase(),
         worker: workerAddress.toLowerCase(),
         offer_expiry: offerExpiryDate,
-        salt: salt,
+        salt,
         milestones: milestones.map((m, idx) => ({
           idx,
           title: m.title.trim(),
@@ -160,7 +211,6 @@ function CreateAgreementForm() {
 
       const validJobId = jobIdParam && jobIdParam.trim().length > 10 ? jobIdParam.trim() : null;
 
-      // 4. Simpan kesepakatan awal dengan status DRAFT[cite: 1]
       setLoadingStep("Menyimpan draft kesepakatan...");
       const { data: agreementRow, error: errAgree } = await supabase
         .from("agreements")
@@ -175,7 +225,7 @@ function CreateAgreementForm() {
           description: description.trim(),
           currency: "IDR",
           offer_expiry: offerExpiryDate,
-          salt: salt,
+          salt,
           terms_canonical: canonicalString,
           terms_hash: termsHash,
         })
@@ -184,7 +234,6 @@ function CreateAgreementForm() {
 
       if (errAgree) throw errAgree;
 
-      // 5. Simpan seluruh baris milestones selagi berstatus DRAFT[cite: 1]
       setLoadingStep("Menyimpan rincian termin...");
       const msRows = milestones.map((m, idx) => ({
         agreement_id: agreementRow.id,
@@ -199,35 +248,26 @@ function CreateAgreementForm() {
       const { error: errMs } = await supabase.from("milestones").insert(msRows);
       if (errMs) throw errMs;
 
-      // 6. Alihkan status ke ANCHORING sebelum trigger transaksi Web3[cite: 1]
       await supabase
         .from("agreements")
         .update({ status: "ANCHORING" })
         .eq("id", agreementRow.id);
 
-      // 7. Eksekusi transaksi on-chain createAgreement
       setLoadingStep("Menunggu konfirmasi transaksi di wallet...");
       const expiryTimestamp = BigInt(Math.floor(new Date(offerExpiryDate).getTime() / 1000));
       const tx = await writeContractAsync({
         address: contractAddress,
         abi: WORKCHAIN_ABI,
         functionName: "createAgreement",
-        args: [
-          workerAddress as `0x${string}`,
-          termsHash,
-          expiryTimestamp,
-          milestones.length,
-        ],
+        args: [workerAddress as `0x${string}`, termsHash, expiryTimestamp, milestones.length],
       });
 
-      // 8. Tunggu konfirmasi blok transaksi Sepolia & ekstrak ID
       setLoadingStep("Mengonfirmasi blok transaksi di Sepolia...");
       let realChainId: number | null = null;
 
       if (publicClient) {
         const receipt = await publicClient.waitForTransactionReceipt({ hash: tx });
 
-        // Metode A: Coba parse menggunakan parseEventLogs bawaan viem
         try {
           const logs = parseEventLogs({
             abi: WORKCHAIN_ABI,
@@ -236,38 +276,29 @@ function CreateAgreementForm() {
           });
 
           if (logs.length > 0) {
-            const eventArgs: any = logs[0].args;
-            const parsedVal = eventArgs.agreementId ?? eventArgs.id ?? eventArgs._id ?? eventArgs[0];
-            if (parsedVal !== undefined && parsedVal !== null) {
+            const eventArgs = logs[0].args as unknown as AgreementCreatedArgs;
+            const parsedVal = eventArgs.agreementId ?? eventArgs.id ?? eventArgs._id;
+            if (parsedVal !== undefined) {
               realChainId = Number(parsedVal);
-              console.log("Berhasil parse ID via parseEventLogs:", realChainId);
             }
           }
         } catch (logErr) {
           console.warn("parseEventLogs dilewati:", logErr);
         }
 
-        // Metode B: Ekstraksi manual dari raw logs topics (EVM indexed parameter ke-1)
-        if (!realChainId && receipt.logs && receipt.logs.length > 0) {
-          try {
-            for (const log of receipt.logs) {
-              if (log.topics && log.topics.length > 1 && log.topics[1]) {
-                const hexId = log.topics[1];
-                const numericId = Number(BigInt(hexId));
-                if (numericId > 0 && numericId < 1000000) {
-                  realChainId = numericId;
-                  console.log("Berhasil ekstrak ID dari raw log topics[1]:", realChainId);
-                  break;
-                }
-              }
+        if (!realChainId) {
+          for (const log of receipt.logs) {
+            const idTopic = log.topics[1];
+            if (!idTopic) continue;
+            const numericId = Number(BigInt(idTopic));
+            if (numericId > 0 && numericId < 1000000) {
+              realChainId = numericId;
+              break;
             }
-          } catch (topicErr) {
-            console.warn("Gagal parse raw topics:", topicErr);
           }
         }
       }
 
-      // Metode C: Fallback aman jika RPC tidak memancarkan log lengkap
       if (!realChainId) {
         console.warn("Event logs tidak tertangkap, beralih ke fallback database increment...");
         const { data: latestRow } = await supabase
@@ -280,10 +311,8 @@ function CreateAgreementForm() {
           .maybeSingle();
 
         realChainId = (Number(latestRow?.chain_agreement_id) || 0) + 1;
-        console.log("Menggunakan chain_agreement_id fallback:", realChainId);
       }
 
-      // 9. Update data ke Supabase dengan status PENDING[cite: 1]
       setLoadingStep("Menyimpan kesepakatan...");
       const { error: updateError } = await supabase
         .from("agreements")
@@ -298,12 +327,8 @@ function CreateAgreementForm() {
 
       if (updateError) throw updateError;
 
-      // 10. Sinkronisasi status lowongan jika berasal dari job board
       if (validJobId) {
-        await supabase
-          .from("job_postings")
-          .update({ status: "ASSIGNED" })
-          .eq("id", validJobId);
+        await supabase.from("job_postings").update({ status: "ASSIGNED" }).eq("id", validJobId);
 
         await supabase
           .from("job_proposals")
@@ -313,9 +338,9 @@ function CreateAgreementForm() {
       }
 
       router.push(`/project/${agreementRow.id}`);
-    } catch (err: any) {
-      console.error("Detail Error Pembuatan Kontrak:", err?.message || err?.details || err);
-      setErrorMsg(err?.details || err?.message || "Gagal membuat kesepakatan kerja.");
+    } catch (err: unknown) {
+      console.error("Detail Error Pembuatan Kontrak:", err);
+      setErrorMsg(getErrorMessage(err));
     } finally {
       setIsLoading(false);
       setLoadingStep("");
@@ -323,23 +348,22 @@ function CreateAgreementForm() {
   };
 
   return (
-    <div className="min-h-screen bg-[#08090c] text-white selection:bg-[#ff4625]/30 font-sans pb-24 relative overflow-hidden">
-      <div className="pointer-events-none fixed top-[-10%] right-[10%] w-[500px] h-[500px] bg-gradient-to-br from-[#ff4625]/10 to-[#8b5cf6]/10 blur-[130px] rounded-full" />
-      <div className="pointer-events-none fixed bottom-[-10%] left-[-10%] w-[600px] h-[600px] bg-gradient-to-tr from-[#6366f1]/10 to-transparent blur-[150px] rounded-full" />
-
+    <div className="relative min-h-screen overflow-hidden bg-[#08090c] pb-24 font-sans text-white selection:bg-[#34d399]/30">
+      <div className="pointer-events-none fixed right-[8%] top-[-12%] h-[480px] w-[480px] rounded-full bg-[#34d399]/[0.06] blur-[140px]" />
       <div
-        className="pointer-events-none fixed inset-0 opacity-[0.03]"
+        className="pointer-events-none fixed inset-0 opacity-[0.025]"
         style={{
-          backgroundImage: `linear-gradient(#ffffff 1px, transparent 1px), linear-gradient(90deg, #ffffff 1px, transparent 1px)`,
+          backgroundImage:
+            "linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)",
           backgroundSize: "40px 40px",
         }}
       />
 
-      <header className="sticky top-0 z-40 border-b border-white/[0.06] bg-[#08090c]/80 backdrop-blur-xl px-6 py-4">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
+      <header className="sticky top-0 z-40 border-b border-white/[0.08] bg-[#08090c]/80 px-6 py-4 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-4xl items-center justify-between">
           <Link
             href="/dashboard"
-            className="flex items-center gap-2 text-xs font-mono text-zinc-400 hover:text-white transition py-1 px-3 rounded-full bg-white/[0.03] border border-white/[0.06]"
+            className="flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 font-mono text-xs text-zinc-400 transition hover:border-white/[0.16] hover:text-white"
           >
             <ArrowLeft className="h-3.5 w-3.5" /> DASHBOARD
           </Link>
@@ -347,125 +371,116 @@ function CreateAgreementForm() {
         </div>
       </header>
 
-      <main className="max-w-3xl mx-auto px-6 pt-10 space-y-8 relative z-10">
-        <div>
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-[#ff4625]/30 bg-[#ff4625]/10 text-[#ff7755] text-[10px] font-mono uppercase tracking-wider mb-2">
-            <Sparkles className="h-3 w-3" /> FORM KONTRAK PROTOKOL V3.1
+      <main className="relative z-10 mx-auto max-w-3xl space-y-8 px-6 pt-10">
+        <section className="space-y-3">
+          <div className="inline-flex items-center gap-1.5 rounded-full border border-[#34d399]/30 bg-[#34d399]/10 px-3 py-1 font-mono text-[10px] uppercase tracking-wider text-[#34d399]">
+            <FileSignature className="h-3 w-3" /> Client · Protokol V3.1
           </div>
-          <h1 className="text-3xl font-extrabold tracking-tight text-white">
-            Inisiasi Kesepakatan Kerja
-          </h1>
-          <p className="text-xs text-zinc-400 mt-1">
-            Mengunci parameter termin IDR dan hash ruang lingkup secara independen di jaringan Sepolia.
+          <h1 className="text-3xl font-bold tracking-tight">Inisiasi Kesepakatan Kerja</h1>
+          <p className="max-w-xl text-sm leading-relaxed text-zinc-400">
+            Mengunci parameter termin IDR dan hash ruang lingkup secara independen di jaringan
+            Sepolia.
           </p>
-        </div>
+        </section>
 
         {jobIdParam && (
-          <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/[0.08] flex items-center gap-3">
-            <Briefcase className="h-4 w-4 text-[#ff5733] shrink-0" />
+          <div className="flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4 backdrop-blur-sm">
+            <Briefcase className="h-4 w-4 shrink-0 text-[#34d399]" />
             <div className="text-xs">
               <span className="text-zinc-400">Terhubung ke Lowongan:</span>{" "}
-              <strong className="text-white font-mono">{jobIdParam.slice(0, 8)}...</strong>
+              <strong className="font-mono text-white">{jobIdParam.slice(0, 8)}...</strong>
             </div>
           </div>
         )}
 
         {errorMsg && (
-          <div className="p-4 rounded-xl bg-red-950/30 border border-red-800/60 text-xs text-red-300 flex items-start gap-2.5">
-            <AlertCircle className="h-4 w-4 shrink-0 text-red-400 mt-0.5" />
+          <div
+            role="alert"
+            className="flex items-start gap-2.5 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-xs text-red-300"
+          >
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
             <span className="break-all">{errorMsg}</span>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="p-7 rounded-3xl bg-[#0e1017] border border-white/[0.08] space-y-5">
-            <div>
-              <label className="text-[10px] font-mono text-zinc-400 uppercase block mb-1">
-                Alamat Dompet Worker (0x...)
-              </label>
+        <form onSubmit={handleSubmit} className="space-y-8">
+          <section className="space-y-5 rounded-3xl border border-white/[0.08] bg-white/[0.02] p-7 backdrop-blur-sm">
+            <Field label="Alamat Dompet Worker" icon={<Wallet className="h-3 w-3" />}>
               <input
                 type="text"
                 placeholder="0x..."
                 value={workerAddress}
                 onChange={(e) => setWorkerAddress(e.target.value)}
                 required
-                className="w-full px-4 py-2.5 bg-[#08090c] border border-white/[0.08] rounded-xl font-mono text-xs text-white focus:outline-none focus:border-[#ff4625] transition"
+                className={`${inputClass} font-mono text-xs`}
               />
-            </div>
+            </Field>
 
-            <div>
-              <label className="text-[10px] font-mono text-zinc-400 uppercase block mb-1">
-                Judul Kesepakatan
-              </label>
+            <Field label="Judul Kesepakatan">
               <input
                 type="text"
                 placeholder="Contoh: Pengembangan Fitur Web3 & Integrasi Smart Contract"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 required
-                className="w-full px-4 py-2.5 bg-[#08090c] border border-white/[0.08] rounded-xl text-xs text-white focus:outline-none focus:border-[#ff4625] transition"
+                className={inputClass}
               />
-            </div>
+            </Field>
 
-            <div>
-              <label className="text-[10px] font-mono text-zinc-400 uppercase block mb-1">
-                Deskripsi Ruang Lingkup (Scope)
-              </label>
+            <Field label="Deskripsi Ruang Lingkup (Scope)">
               <textarea
                 rows={3}
                 placeholder="Tuliskan deliverable yang diharapkan, batasan tugas, dan spesifikasi teknis..."
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 required
-                className="w-full px-4 py-2.5 bg-[#08090c] border border-white/[0.08] rounded-xl text-xs text-white focus:outline-none focus:border-[#ff4625] transition"
+                className={`${inputClass} resize-none`}
               />
-            </div>
+            </Field>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="text-[10px] font-mono text-zinc-400 uppercase block mb-1">
-                  Masa Berlaku Penawaran (Hari)
-                </label>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="Masa Berlaku Penawaran (Hari)" icon={<CalendarClock className="h-3 w-3" />}>
                 <input
                   type="number"
                   min="1"
                   max="30"
                   value={offerDays}
                   onChange={(e) => setOfferDays(Number(e.target.value))}
-                  className="w-full px-4 py-2.5 bg-[#08090c] border border-white/[0.08] rounded-xl font-mono text-xs text-white focus:outline-none focus:border-[#ff4625]"
+                  className={`${inputClass} font-mono text-xs`}
                 />
-              </div>
-              <div>
-                <label className="text-[10px] font-mono text-zinc-400 uppercase block mb-1">
-                  Denominasi Mata Uang
-                </label>
+              </Field>
+              <Field label="Denominasi Mata Uang" icon={<Coins className="h-3 w-3" />}>
                 <input
                   type="text"
                   disabled
                   value="IDR (Rupiah - Off-chain Settlement)"
-                  className="w-full px-4 py-2.5 bg-black/40 border border-white/[0.06] rounded-xl font-mono text-xs text-zinc-500 cursor-not-allowed"
+                  className="w-full cursor-not-allowed rounded-xl border border-white/[0.06] bg-black/40 px-4 py-2.5 font-mono text-xs text-zinc-500"
                 />
-              </div>
+              </Field>
             </div>
-          </div>
+          </section>
 
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Layers className="h-4 w-4 text-[#ff5733]" />
-                  Termin Pekerjaan ({milestones.length}/10)
-                </h3>
-                <span className="text-xs font-mono text-[#ff5733] font-semibold">
+          <section className="space-y-4">
+            <div className="flex items-end justify-between gap-4">
+              <div className="space-y-1">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <Layers className="h-4 w-4 text-[#34d399]" />
+                  Termin Pekerjaan
+                  <span className="font-mono text-xs font-normal text-zinc-500">
+                    {milestones.length}/{MAX_MILESTONES}
+                  </span>
+                </h2>
+                <p className="font-mono text-xs font-semibold text-[#34d399]">
                   Total Nilai: Rp {totalAmount.toLocaleString("id-ID")}
-                </span>
+                </p>
               </div>
               <button
                 type="button"
                 onClick={addMilestone}
-                className="px-3.5 py-1.5 rounded-xl border border-white/[0.1] bg-white/[0.03] hover:bg-white/[0.08] text-xs font-mono text-zinc-300 flex items-center gap-1.5 transition"
+                disabled={milestones.length >= MAX_MILESTONES}
+                className="flex items-center gap-1.5 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3.5 py-1.5 font-mono text-xs text-zinc-300 transition hover:border-[#34d399]/40 hover:text-[#34d399] disabled:cursor-not-allowed disabled:opacity-40"
               >
-                <Plus className="h-3 w-3" /> Tambah Tahap
+                <Plus className="h-3.5 w-3.5" /> Tambah Tahap
               </button>
             </div>
 
@@ -473,35 +488,32 @@ function CreateAgreementForm() {
               {milestones.map((m, idx) => (
                 <div
                   key={idx}
-                  className="p-5 rounded-2xl bg-[#0e1017] border border-white/[0.06] space-y-3"
+                  className="space-y-3 rounded-2xl border border-white/[0.08] bg-white/[0.02] p-5 backdrop-blur-sm"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="font-mono text-xs text-[#ff5733] font-bold">
+                    <span className="font-mono text-xs font-bold text-[#34d399]">
                       Tahap #{idx + 1}
                     </span>
                     {milestones.length > 1 && (
                       <button
                         type="button"
                         onClick={() => removeMilestone(idx)}
-                        className="text-zinc-600 hover:text-red-400 transition"
+                        aria-label={`Hapus tahap ${idx + 1}`}
+                        className="text-zinc-600 transition hover:text-red-400"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
                     )}
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_auto]">
                     <input
                       type="text"
                       placeholder="Judul termin"
                       value={m.title}
-                      onChange={(e) => {
-                        const copy = [...milestones];
-                        copy[idx].title = e.target.value;
-                        setMilestones(copy);
-                      }}
+                      onChange={(e) => updateMilestone(idx, { title: e.target.value })}
                       required
-                      className="px-3.5 py-2 bg-[#08090c] border border-white/[0.08] rounded-xl text-xs text-white focus:outline-none focus:border-[#ff4625]"
+                      className={inputClass}
                     />
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-xs text-zinc-500">Rp</span>
@@ -509,13 +521,21 @@ function CreateAgreementForm() {
                         type="number"
                         placeholder="Nominal"
                         value={m.amount}
-                        onChange={(e) => {
-                          const copy = [...milestones];
-                          copy[idx].amount = Number(e.target.value);
-                          setMilestones(copy);
-                        }}
+                        onChange={(e) => updateMilestone(idx, { amount: Number(e.target.value) })}
                         required
-                        className="w-full px-3.5 py-2 bg-[#08090c] border border-white/[0.08] rounded-xl text-xs text-white font-mono focus:outline-none focus:border-[#ff4625]"
+                        className={`${inputClass} font-mono text-xs sm:w-40`}
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <CalendarClock className="h-3.5 w-3.5 text-zinc-500" />
+                      <input
+                        type="number"
+                        min="1"
+                        placeholder="Hari"
+                        value={m.days}
+                        onChange={(e) => updateMilestone(idx, { days: Number(e.target.value) })}
+                        required
+                        className={`${inputClass} font-mono text-xs sm:w-20`}
                       />
                     </div>
                   </div>
@@ -524,33 +544,39 @@ function CreateAgreementForm() {
                     type="text"
                     placeholder="Deskripsi target deliverable tahapan ini..."
                     value={m.description}
-                    onChange={(e) => {
-                      const copy = [...milestones];
-                      copy[idx].description = e.target.value;
-                      setMilestones(copy);
-                    }}
+                    onChange={(e) => updateMilestone(idx, { description: e.target.value })}
                     required
-                    className="w-full px-3.5 py-2 bg-[#08090c] border border-white/[0.08] rounded-xl text-xs text-white focus:outline-none focus:border-[#ff4625]"
+                    className={inputClass}
                   />
                 </div>
               ))}
             </div>
-          </div>
+          </section>
 
-          <button
-            type="submit"
-            disabled={isLoading || !isConnected}
-            className="w-full py-3.5 rounded-xl bg-[#ff4625] hover:bg-[#e03a1a] text-white font-mono text-xs font-bold tracking-wide shadow-xl shadow-[#ff4625]/25 transition hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {isLoading ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span>{loadingStep || "MEMPROSES..."}</span>
-              </>
-            ) : (
-              "KUNCI & DAFTARKAN KESEPAKATAN ON-CHAIN"
+          <div className="space-y-3">
+            <button
+              type="submit"
+              disabled={isLoading || !isConnected}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#34d399] py-3.5 font-mono text-xs font-bold tracking-wide text-[#08090c] shadow-lg shadow-[#34d399]/20 transition hover:bg-[#2cc08a] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>{loadingStep || "MEMPROSES..."}</span>
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="h-4 w-4" />
+                  <span>KUNCI & DAFTARKAN KESEPAKATAN ON-CHAIN</span>
+                </>
+              )}
+            </button>
+            {!isConnected && (
+              <p className="text-center font-mono text-[10px] text-zinc-500">
+                Hubungkan dompet untuk melanjutkan.
+              </p>
             )}
-          </button>
+          </div>
         </form>
       </main>
     </div>
@@ -561,8 +587,8 @@ export default function CreateAgreementPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen bg-[#08090c] flex items-center justify-center text-zinc-400">
-          <Loader2 className="h-6 w-6 animate-spin text-[#ff5733]" />
+        <div className="flex min-h-screen items-center justify-center bg-[#08090c] text-zinc-400">
+          <Loader2 className="h-6 w-6 animate-spin text-[#34d399]" />
         </div>
       }
     >

@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useAccount } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import {
   Briefcase,
@@ -13,18 +12,35 @@ import {
   Plus,
   Loader2,
   ArrowLeft,
-  Sparkles,
+  UserCheck,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
+interface JobListing {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  client_address: string;
+  budget_idr: number | string;
+  estimated_days: number;
+  job_proposals?: { count: number }[];
+}
+
+const CATEGORIES = ["ALL", "DEVELOPMENT", "DESIGN", "SMART_CONTRACT", "SECURITY"] as const;
+type Category = (typeof CATEGORIES)[number];
+
+const formatCategory = (cat: string) => cat.replace(/_/g, " ");
+
 export default function BrowseJobsPage() {
-  const { isConnected } = useAccount();
-  const [jobs, setJobs] = useState<any[]>([]);
+  const [jobs, setJobs] = useState<JobListing[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("ALL");
+  const [selectedCategory, setSelectedCategory] = useState<Category>("ALL");
 
   useEffect(() => {
+    let cancelled = false;
+
     const fetchJobs = async () => {
       setLoading(true);
       try {
@@ -40,39 +56,53 @@ export default function BrowseJobsPage() {
 
         const { data, error } = await query;
         if (error) throw error;
-        setJobs(data || []);
+        if (!cancelled) setJobs((data as JobListing[]) || []);
       } catch (err) {
         console.error("Gagal mengambil daftar pekerjaan:", err);
+        if (!cancelled) setJobs([]);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
     fetchJobs();
+
+    return () => {
+      cancelled = true;
+    };
   }, [selectedCategory]);
 
-  const filteredJobs = jobs.filter(
-    (j) =>
-      j.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      j.description.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredJobs = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return jobs;
+    return jobs.filter(
+      (j) => j.title.toLowerCase().includes(term) || j.description.toLowerCase().includes(term)
+    );
+  }, [jobs, searchTerm]);
 
   return (
-    <div className="min-h-screen bg-[#08090c] text-white selection:bg-[#ff4625]/30 font-sans pb-24 relative overflow-hidden">
-      <div className="pointer-events-none fixed top-[-10%] right-[10%] w-[500px] h-[500px] bg-gradient-to-br from-[#ff4625]/10 to-[#8b5cf6]/10 blur-[130px] rounded-full" />
+    <div className="relative min-h-screen overflow-hidden bg-[#08090c] pb-24 font-sans text-white selection:bg-[#ff4625]/30">
+      <div className="pointer-events-none fixed right-[8%] top-[-12%] h-[480px] w-[480px] rounded-full bg-[#ff4625]/[0.06] blur-[140px]" />
+      <div
+        className="pointer-events-none fixed inset-0 opacity-[0.025]"
+        style={{
+          backgroundImage:
+            "linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)",
+          backgroundSize: "40px 40px",
+        }}
+      />
 
-      {/* Top Navbar */}
-      <header className="sticky top-0 z-40 border-b border-white/[0.06] bg-[#08090c]/80 backdrop-blur-xl px-6 py-4">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
+      <header className="sticky top-0 z-40 border-b border-white/[0.08] bg-[#08090c]/80 px-6 py-4 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-6xl items-center justify-between">
           <div className="flex items-center gap-4">
             <Link
               href="/"
-              className="flex items-center gap-2 text-xs font-mono text-zinc-400 hover:text-white transition py-1 px-3 rounded-full bg-white/[0.03] border border-white/[0.06]"
+              className="flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 font-mono text-xs text-zinc-400 transition hover:border-white/[0.16] hover:text-white"
             >
               <ArrowLeft className="h-3.5 w-3.5" /> BERANDA
             </Link>
             <span className="text-zinc-700">/</span>
-            <span className="font-mono text-xs text-zinc-300 font-semibold uppercase">
+            <span className="font-mono text-xs font-semibold uppercase tracking-wider text-zinc-300">
               MARKETPLACE LOWONGAN
             </span>
           </div>
@@ -80,7 +110,7 @@ export default function BrowseJobsPage() {
           <div className="flex items-center gap-3">
             <Link
               href="/jobs/new"
-              className="px-4 py-2 rounded-xl bg-[#ff4625] hover:bg-[#e03a1a] text-white font-mono text-xs font-bold transition flex items-center gap-1.5 shadow-lg shadow-[#ff4625]/20"
+              className="flex items-center gap-1.5 rounded-xl bg-[#34d399] px-4 py-2 font-mono text-xs font-bold text-[#08090c] shadow-lg shadow-[#34d399]/20 transition hover:bg-[#2cc08a]"
             >
               <Plus className="h-3.5 w-3.5" /> PASANG LOWONGAN
             </Link>
@@ -89,101 +119,110 @@ export default function BrowseJobsPage() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-6 pt-10 space-y-8 relative z-10">
-        <div className="space-y-3">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-[#ff4625]/30 bg-[#ff4625]/10 text-[#ff7755] text-xs font-mono uppercase">
-            <Sparkles className="h-3.5 w-3.5" /> WORKCHAIN JOB BOARD
+      <main className="relative z-10 mx-auto max-w-6xl space-y-8 px-6 pt-10">
+        <section className="space-y-3">
+          <div className="inline-flex items-center gap-1.5 rounded-full border border-[#ff4625]/30 bg-[#ff4625]/10 px-3 py-1 font-mono text-[10px] uppercase tracking-wider text-[#ff5733]">
+            <Briefcase className="h-3 w-3" /> Worker · Job Board
           </div>
-          <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
+          <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
             Eksplorasi Proyek Freelance
           </h1>
-          <p className="text-xs sm:text-sm text-zinc-400 max-w-xl">
-            Pilih tawaran proyek berdenominasi IDR dengan komitmen perlindungan notarisasi kriptografis di Sepolia.
+          <p className="max-w-xl text-sm leading-relaxed text-zinc-400">
+            Pilih tawaran proyek berdenominasi IDR dengan komitmen perlindungan notarisasi
+            kriptografis di Sepolia.
           </p>
-        </div>
+        </section>
 
-        {/* Search & Category Filter */}
-        <div className="flex flex-col sm:flex-row items-center gap-3">
-          <div className="relative flex-1 w-full">
-            <Search className="absolute left-4 top-3 h-4 w-4 text-zinc-500" />
+        <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
+          <div className="relative w-full flex-1">
+            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
             <input
               type="text"
               placeholder="Cari lowongan berdasarkan keahlian atau kata kunci..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-11 pr-4 py-2.5 rounded-xl bg-[#0e1017] border border-white/[0.08] text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#ff4625] transition"
+              className="w-full rounded-xl border border-white/[0.08] bg-white/[0.02] py-2.5 pl-11 pr-4 text-sm text-white placeholder:text-zinc-600 transition focus:border-[#ff4625]/60 focus:bg-white/[0.04] focus:outline-none focus:ring-1 focus:ring-[#ff4625]/30"
             />
           </div>
 
-          <div className="flex items-center gap-2 overflow-x-auto w-full sm:w-auto pb-1">
-            {["ALL", "DEVELOPMENT", "DESIGN", "SMART_CONTRACT", "SECURITY"].map((cat) => (
-              <button
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`px-3.5 py-2 rounded-xl text-[11px] font-mono tracking-wider transition uppercase whitespace-nowrap ${
-                  selectedCategory === cat
-                    ? "bg-white/[0.1] text-white border border-white/[0.2]"
-                    : "bg-[#0e1017] text-zinc-400 border border-white/[0.06] hover:text-white"
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
+          <div className="flex w-full items-center gap-2 overflow-x-auto pb-1 sm:w-auto sm:pb-0">
+            <Filter className="h-4 w-4 shrink-0 text-zinc-500" />
+            {CATEGORIES.map((cat) => {
+              const selected = selectedCategory === cat;
+              return (
+                <button
+                  key={cat}
+                  onClick={() => setSelectedCategory(cat)}
+                  aria-pressed={selected}
+                  className={`whitespace-nowrap rounded-xl border px-3.5 py-2 font-mono text-[11px] uppercase tracking-wider transition ${
+                    selected
+                      ? "border-[#ff4625]/40 bg-[#ff4625]/10 text-[#ff5733]"
+                      : "border-white/[0.08] bg-white/[0.02] text-zinc-400 hover:border-white/[0.16] hover:text-white"
+                  }`}
+                >
+                  {formatCategory(cat)}
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        {/* Job List Cards */}
         {loading ? (
-          <div className="p-16 flex items-center justify-center gap-3 text-zinc-400">
+          <div className="flex items-center justify-center gap-3 p-16 text-zinc-400">
             <Loader2 className="h-5 w-5 animate-spin text-[#ff5733]" />
-            <span className="font-mono text-xs uppercase tracking-wider">Memuat lowongan terbuka...</span>
+            <span className="font-mono text-xs uppercase tracking-wider">
+              Memuat lowongan terbuka...
+            </span>
           </div>
         ) : filteredJobs.length === 0 ? (
-          <div className="p-12 rounded-3xl border border-white/[0.08] bg-[#0e1017] text-center space-y-3">
-            <Briefcase className="h-8 w-8 text-zinc-600 mx-auto" />
-            <h3 className="text-sm font-bold text-white">Tidak Ada Lowongan Ditemukan</h3>
-            <p className="text-xs text-zinc-400">Jadilah yang pertama memasang lowongan pekerjaan baru!</p>
+          <div className="space-y-3 rounded-3xl border border-white/[0.08] bg-white/[0.02] p-12 text-center backdrop-blur-sm">
+            <Search className="mx-auto h-8 w-8 text-zinc-600" />
+            <h3 className="text-sm font-semibold text-white">Tidak Ada Lowongan Ditemukan</h3>
+            <p className="text-xs text-zinc-400">
+              Ubah kata kunci atau kategori, atau pasang lowongan baru.
+            </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {filteredJobs.map((job) => (
               <Link
                 key={job.id}
                 href={`/jobs/${job.id}`}
-                className="group p-6 rounded-2xl bg-[#0e1017] border border-white/[0.06] hover:border-[#ff4625]/40 transition space-y-4 shadow-xl hover:shadow-2xl"
+                className="group block space-y-4 rounded-2xl border border-white/[0.08] bg-white/[0.02] p-6 backdrop-blur-sm transition hover:border-[#ff5733]/40"
               >
                 <div className="flex items-start justify-between gap-3">
-                  <div className="space-y-1">
-                    <span className="text-[10px] font-mono text-[#ff5733] uppercase tracking-wider">
-                      {job.category}
+                  <div className="min-w-0 space-y-1">
+                    <span className="font-mono text-[10px] uppercase tracking-wider text-[#ff5733]">
+                      {formatCategory(job.category)}
                     </span>
-                    <h3 className="text-base font-bold text-white group-hover:text-[#ff5733] transition line-clamp-1">
+                    <h3 className="line-clamp-1 text-base font-semibold text-white transition group-hover:text-[#ff5733]">
                       {job.title}
                     </h3>
                   </div>
-                  <div className="text-right">
-                    <span className="text-sm font-bold font-mono text-white block">
+                  <div className="shrink-0 text-right">
+                    <span className="block font-mono text-sm font-bold text-white">
                       Rp {Number(job.budget_idr).toLocaleString("id-ID")}
                     </span>
-                    <span className="text-[10px] font-mono text-zinc-500">
-                      EST. {job.estimated_days} HARI
+                    <span className="flex items-center justify-end gap-1 font-mono text-[10px] text-zinc-500">
+                      <Clock className="h-3 w-3" /> EST. {job.estimated_days} HARI
                     </span>
                   </div>
                 </div>
 
-                <p className="text-xs text-zinc-400 line-clamp-2 leading-relaxed">
+                <p className="line-clamp-2 text-xs leading-relaxed text-zinc-400">
                   {job.description}
                 </p>
 
-                <div className="pt-3 border-t border-white/[0.04] flex items-center justify-between text-xs font-mono">
-                  <span className="text-zinc-500 truncate max-w-[200px]">
+                <div className="flex items-center justify-between border-t border-white/[0.06] pt-3 font-mono text-xs">
+                  <span className="max-w-[200px] truncate text-zinc-500">
                     Klien: {job.client_address.slice(0, 10)}...
                   </span>
                   <div className="flex items-center gap-3">
-                    <span className="text-zinc-400 text-[11px]">
-                      {job.job_proposals?.[0]?.count || 0} Lamaran
+                    <span className="flex items-center gap-1 text-[11px] text-zinc-400">
+                      <UserCheck className="h-3 w-3" /> {job.job_proposals?.[0]?.count ?? 0}{" "}
+                      Lamaran
                     </span>
-                    <span className="flex items-center gap-1 text-[#ff5733] group-hover:translate-x-0.5 transition">
+                    <span className="flex items-center gap-1 text-[#ff5733] transition group-hover:translate-x-0.5">
                       DETAIL <ArrowUpRight className="h-3 w-3" />
                     </span>
                   </div>
@@ -195,4 +234,4 @@ export default function BrowseJobsPage() {
       </main>
     </div>
   );
-}   
+}

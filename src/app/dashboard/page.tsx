@@ -15,17 +15,80 @@ import {
   UserCheck,
   CheckCircle2,
   Clock,
-  Sparkles,
+  FileText,
+  Wallet,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
+type Role = "client" | "worker";
+
+interface Agreement {
+  id: string;
+  title: string;
+  description: string;
+  status: string;
+  client_address: string;
+  worker_address: string;
+  created_at: string;
+}
+
+const ROLE_THEME: Record<
+  Role,
+  {
+    text: string;
+    solid: string;
+    solidText: string;
+    shadow: string;
+    cardHover: string;
+    titleHover: string;
+    selection: string;
+    glow: string;
+  }
+> = {
+  client: {
+    text: "text-[#34d399]",
+    solid: "bg-[#34d399]",
+    solidText: "text-[#08090c]",
+    shadow: "shadow-[#34d399]/20",
+    cardHover: "hover:border-[#34d399]/40",
+    titleHover: "group-hover:text-[#34d399]",
+    selection: "selection:bg-[#34d399]/30",
+    glow: "bg-[#34d399]/[0.06]",
+  },
+  worker: {
+    text: "text-[#ff5733]",
+    solid: "bg-[#ff4625]",
+    solidText: "text-white",
+    shadow: "shadow-[#ff4625]/20",
+    cardHover: "hover:border-[#ff5733]/40",
+    titleHover: "group-hover:text-[#ff5733]",
+    selection: "selection:bg-[#ff4625]/30",
+    glow: "bg-[#ff4625]/[0.06]",
+  },
+};
+
+const STATUS_BADGE: Record<string, string> = {
+  ACTIVE: "border-[#34d399]/30 bg-[#34d399]/10 text-[#34d399]",
+  COMPLETED: "border-white/[0.16] bg-white/[0.06] text-zinc-200",
+  PENDING: "border-amber-500/30 bg-amber-500/10 text-amber-300",
+  ANCHORING: "border-amber-500/30 bg-amber-500/10 text-amber-300",
+};
+
+const DEFAULT_BADGE = "border-white/[0.08] bg-white/[0.04] text-zinc-400";
+
+const roleOptions: { value: Role; label: string; icon: typeof Briefcase }[] = [
+  { value: "client", label: "SEBAGAI KLIEN", icon: Briefcase },
+  { value: "worker", label: "SEBAGAI WORKER", icon: UserCheck },
+];
+
 export default function DashboardPage() {
   const { address, isConnected } = useAccount();
-  const [role, setRole] = useState<"client" | "worker">("client");
-  const [agreements, setAgreements] = useState<any[]>([]);
+  const [role, setRole] = useState<Role>("client");
+  const [agreements, setAgreements] = useState<Agreement[]>([]);
   const [loading, setLoading] = useState(true);
 
   const currentWallet = address?.toLowerCase() || "";
+  const theme = ROLE_THEME[role];
 
   useEffect(() => {
     if (!currentWallet) {
@@ -34,69 +97,78 @@ export default function DashboardPage() {
       return;
     }
 
+    let cancelled = false;
+
     const fetchAgreements = async () => {
       setLoading(true);
       try {
-        const query = supabase.from("agreements").select("*");
-        if (role === "client") {
-          query.eq("client_address", currentWallet);
-        } else {
-          query.eq("worker_address", currentWallet);
-        }
+        const column = role === "client" ? "client_address" : "worker_address";
+        const { data, error } = await supabase
+          .from("agreements")
+          .select("*")
+          .eq(column, currentWallet)
+          .order("created_at", { ascending: false });
 
-        const { data, error } = await query.order("created_at", { ascending: false });
         if (error) throw error;
-        setAgreements(data || []);
+        if (!cancelled) setAgreements((data as Agreement[]) || []);
       } catch (err) {
         console.error("Gagal mengambil data dashboard:", err);
+        if (!cancelled) setAgreements([]);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
     fetchAgreements();
+
+    return () => {
+      cancelled = true;
+    };
   }, [currentWallet, role]);
 
   const activeCount = agreements.filter((a) => a.status === "ACTIVE").length;
-  const pendingCount = agreements.filter((a) => a.status === "PENDING" || a.status === "ANCHORING").length;
+  const pendingCount = agreements.filter(
+    (a) => a.status === "PENDING" || a.status === "ANCHORING"
+  ).length;
+  const completedCount = agreements.filter((a) => a.status === "COMPLETED").length;
+
+  const createButtonClass =
+    "items-center gap-1.5 rounded-xl bg-[#34d399] px-4 py-2 font-mono text-xs font-bold text-[#08090c] shadow-lg shadow-[#34d399]/20 transition hover:bg-[#2cc08a]";
 
   return (
-    <div className="min-h-screen bg-[#08090c] text-white selection:bg-[#ff4625]/30 selection:text-white font-sans antialiased relative overflow-hidden pb-24">
-      {/* Ambient Lighting Gradients */}
-      <div className="pointer-events-none fixed top-[-10%] right-[10%] w-[500px] h-[500px] bg-gradient-to-br from-[#ff4625]/10 to-[#8b5cf6]/10 blur-[130px] rounded-full" />
-      <div className="pointer-events-none fixed bottom-[-10%] left-[-10%] w-[600px] h-[600px] bg-gradient-to-tr from-[#6366f1]/10 to-transparent blur-[150px] rounded-full" />
-
-      {/* Grid Pattern */}
+    <div
+      className={`relative min-h-screen overflow-hidden bg-[#08090c] pb-24 font-sans text-white antialiased ${theme.selection}`}
+    >
       <div
-        className="pointer-events-none fixed inset-0 opacity-[0.03]"
+        className={`pointer-events-none fixed right-[8%] top-[-12%] h-[480px] w-[480px] rounded-full blur-[140px] transition-colors duration-500 ${theme.glow}`}
+      />
+      <div
+        className="pointer-events-none fixed inset-0 opacity-[0.025]"
         style={{
-          backgroundImage: `linear-gradient(#ffffff 1px, transparent 1px), linear-gradient(90deg, #ffffff 1px, transparent 1px)`,
+          backgroundImage:
+            "linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)",
           backgroundSize: "40px 40px",
         }}
       />
 
-      {/* Top Header */}
-      <header className="sticky top-0 z-40 border-b border-white/[0.06] bg-[#08090c]/80 backdrop-blur-xl px-6 py-4">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
+      <header className="sticky top-0 z-40 border-b border-white/[0.08] bg-[#08090c]/80 px-6 py-4 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-6xl items-center justify-between">
           <div className="flex items-center gap-3">
             <Link
               href="/"
-              className="flex items-center gap-2 text-xs font-mono text-zinc-400 hover:text-white transition py-1 px-3 rounded-full bg-white/[0.03] border border-white/[0.06]"
+              className="flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 font-mono text-xs text-zinc-400 transition hover:border-white/[0.16] hover:text-white"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
               <span>BERANDA</span>
             </Link>
             <span className="text-zinc-700">/</span>
-            <span className="font-mono text-xs text-zinc-300 font-semibold tracking-wider uppercase">
+            <span className="font-mono text-xs font-semibold uppercase tracking-wider text-zinc-300">
               WORKSPACE
             </span>
           </div>
 
           <div className="flex items-center gap-3">
-            <Link
-              href="/create"
-              className="hidden sm:flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#ff4625] hover:bg-[#e03a1a] text-white font-mono text-xs font-bold shadow-lg shadow-[#ff4625]/20 transition"
-            >
+            <Link href="/create" className={`hidden sm:flex ${createButtonClass}`}>
               <Plus className="h-3.5 w-3.5" />
               <span>BUAT KESEPAKATAN</span>
             </Link>
@@ -105,96 +177,99 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-6 pt-10 space-y-8 relative z-10">
-        {/* Workspace Title & Role Switcher */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <span className="text-[10px] font-mono tracking-widest text-[#ff5733] uppercase">
-              PROTOCOL DASHBOARD
+      <main className="relative z-10 mx-auto max-w-6xl space-y-8 px-6 pt-10">
+        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+          <div className="space-y-1">
+            <span
+              className={`font-mono text-[10px] uppercase tracking-widest transition-colors ${theme.text}`}
+            >
+              Protocol Dashboard
             </span>
-            <h1 className="text-3xl font-extrabold tracking-tight text-white mt-1">
-              Manajemen Kesepakatan
-            </h1>
+            <h1 className="text-3xl font-bold tracking-tight">Manajemen Kesepakatan</h1>
           </div>
 
-          {/* Role Pill Switch */}
-          <div className="flex p-1 rounded-2xl bg-white/[0.04] border border-white/[0.08] self-start sm:self-auto">
-            <button
-              onClick={() => setRole("client")}
-              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-mono font-bold transition ${
-                role === "client"
-                  ? "bg-[#ff4625] text-white shadow-lg shadow-[#ff4625]/20"
-                  : "text-zinc-400 hover:text-white"
-              }`}
-            >
-              <Briefcase className="h-3.5 w-3.5" />
-              <span>SEBAGAI KLIEN</span>
-            </button>
-            <button
-              onClick={() => setRole("worker")}
-              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-mono font-bold transition ${
-                role === "worker"
-                  ? "bg-[#ff4625] text-white shadow-lg shadow-[#ff4625]/20"
-                  : "text-zinc-400 hover:text-white"
-              }`}
-            >
-              <UserCheck className="h-3.5 w-3.5" />
-              <span>SEBAGAI WORKER</span>
-            </button>
+          <div
+            role="tablist"
+            aria-label="Peran"
+            className="flex self-start rounded-2xl border border-white/[0.08] bg-white/[0.03] p-1 sm:self-auto"
+          >
+            {roleOptions.map(({ value, label, icon: Icon }) => {
+              const selected = role === value;
+              const optionTheme = ROLE_THEME[value];
+              return (
+                <button
+                  key={value}
+                  role="tab"
+                  aria-selected={selected}
+                  onClick={() => setRole(value)}
+                  className={`flex items-center gap-2 rounded-xl px-5 py-2 font-mono text-xs font-bold transition ${
+                    selected
+                      ? `${optionTheme.solid} ${optionTheme.solidText} shadow-lg ${optionTheme.shadow}`
+                      : "text-zinc-400 hover:text-white"
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  <span>{label}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        {/* Metric Cards Strip */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="p-6 rounded-2xl bg-[#0e1017] border border-white/[0.06] space-y-1">
-            <span className="text-[10px] font-mono uppercase text-zinc-500 tracking-wider">
-              TOTAL KESEPAKATAN
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
+          <div className="space-y-2 rounded-2xl border border-white/[0.08] bg-white/[0.02] p-6 backdrop-blur-sm">
+            <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-zinc-500">
+              <FileText className="h-3 w-3" /> Total
             </span>
-            <div className="text-2xl font-extrabold text-white font-mono">{agreements.length}</div>
+            <div className="font-mono text-2xl font-bold text-white">{agreements.length}</div>
           </div>
-          <div className="p-6 rounded-2xl bg-[#0e1017] border border-white/[0.06] space-y-1">
-            <span className="text-[10px] font-mono uppercase text-emerald-400 tracking-wider">
-              AKTIF & BERJALAN
+          <div className="space-y-2 rounded-2xl border border-white/[0.08] bg-white/[0.02] p-6 backdrop-blur-sm">
+            <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-[#34d399]">
+              <CheckCircle2 className="h-3 w-3" /> Aktif
             </span>
-            <div className="text-2xl font-extrabold text-emerald-400 font-mono">{activeCount}</div>
+            <div className="font-mono text-2xl font-bold text-[#34d399]">{activeCount}</div>
           </div>
-          <div className="p-6 rounded-2xl bg-[#0e1017] border border-white/[0.06] space-y-1">
-            <span className="text-[10px] font-mono uppercase text-amber-400 tracking-wider">
-              MENUNGGU PROSES
+          <div className="space-y-2 rounded-2xl border border-white/[0.08] bg-white/[0.02] p-6 backdrop-blur-sm">
+            <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-amber-400">
+              <Clock className="h-3 w-3" /> Menunggu
             </span>
-            <div className="text-2xl font-extrabold text-amber-400 font-mono">{pendingCount}</div>
+            <div className="font-mono text-2xl font-bold text-amber-400">{pendingCount}</div>
+          </div>
+          <div className="space-y-2 rounded-2xl border border-white/[0.08] bg-white/[0.02] p-6 backdrop-blur-sm">
+            <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-zinc-400">
+              <Layers className="h-3 w-3" /> Selesai
+            </span>
+            <div className="font-mono text-2xl font-bold text-zinc-200">{completedCount}</div>
           </div>
         </div>
 
-        {/* Content Section */}
         {!isConnected ? (
-          <div className="p-12 rounded-3xl border border-white/[0.08] bg-[#0e1017] text-center space-y-4">
-            <AlertCircle className="h-10 w-10 text-zinc-600 mx-auto" />
-            <h3 className="text-base font-bold text-white">Dompet Belum Terhubung</h3>
-            <p className="text-xs text-zinc-400 max-w-sm mx-auto">
-              Hubungkan dompet Web3 MetaMask Anda untuk melihat daftar kontrak dan perjanjian kerja Anda.
+          <div className="space-y-4 rounded-3xl border border-white/[0.08] bg-white/[0.02] p-12 text-center backdrop-blur-sm">
+            <Wallet className="mx-auto h-10 w-10 text-zinc-600" />
+            <h3 className="text-base font-semibold text-white">Dompet Belum Terhubung</h3>
+            <p className="mx-auto max-w-sm text-xs leading-relaxed text-zinc-400">
+              Hubungkan dompet Web3 Anda untuk melihat daftar kontrak dan perjanjian kerja.
             </p>
           </div>
         ) : loading ? (
-          <div className="p-16 flex items-center justify-center gap-3 text-zinc-400">
-            <Loader2 className="h-5 w-5 animate-spin text-[#ff5733]" />
-            <span className="font-mono text-xs uppercase tracking-wider">Mengambil data kesepakatan...</span>
+          <div className="flex items-center justify-center gap-3 p-16 text-zinc-400">
+            <Loader2 className={`h-5 w-5 animate-spin ${theme.text}`} />
+            <span className="font-mono text-xs uppercase tracking-wider">
+              Mengambil data kesepakatan...
+            </span>
           </div>
         ) : agreements.length === 0 ? (
-          <div className="p-12 rounded-3xl border border-white/[0.08] bg-[#0e1017] text-center space-y-4">
-            <Layers className="h-10 w-10 text-zinc-600 mx-auto" />
-            <h3 className="text-base font-bold text-white">Belum Ada Kesepakatan</h3>
-            <p className="text-xs text-zinc-400 max-w-sm mx-auto">
+          <div className="space-y-4 rounded-3xl border border-white/[0.08] bg-white/[0.02] p-12 text-center backdrop-blur-sm">
+            <AlertCircle className="mx-auto h-10 w-10 text-zinc-600" />
+            <h3 className="text-base font-semibold text-white">Belum Ada Kesepakatan</h3>
+            <p className="mx-auto max-w-sm text-xs leading-relaxed text-zinc-400">
               {role === "client"
-                ? "Anda belum membuat kesepakatan kerja. Klik tombol di bawah untuk membuat kontrak pertama."
+                ? "Anda belum membuat kesepakatan kerja. Buat kontrak pertama untuk memulai."
                 : "Belum ada kontrak yang menugaskan alamat dompet Anda sebagai worker."}
             </p>
             {role === "client" && (
               <div className="pt-2">
-                <Link
-                  href="/create"
-                  className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#ff4625] hover:bg-[#e03a1a] text-white font-mono text-xs font-bold shadow-lg shadow-[#ff4625]/20 transition"
-                >
+                <Link href="/create" className={`inline-flex px-6 py-2.5 ${createButtonClass}`}>
                   <Plus className="h-3.5 w-3.5" />
                   <span>BUAT KESEPAKATAN</span>
                 </Link>
@@ -202,45 +277,47 @@ export default function DashboardPage() {
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {agreements.map((a) => (
               <Link
                 key={a.id}
                 href={`/project/${a.id}`}
-                className="group block p-6 rounded-2xl bg-[#0e1017] border border-white/[0.06] hover:border-[#ff5733]/40 transition space-y-4 shadow-xl hover:shadow-2xl hover:shadow-[#ff5733]/5"
+                className={`group block space-y-4 rounded-2xl border border-white/[0.08] bg-white/[0.02] p-6 backdrop-blur-sm transition ${theme.cardHover}`}
               >
                 <div className="flex items-start justify-between gap-3">
-                  <div className="space-y-1">
-                    <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider block">
+                  <div className="min-w-0 space-y-1">
+                    <span className="block font-mono text-[10px] uppercase tracking-wider text-zinc-500">
                       ID: {a.id.slice(0, 8)}...
                     </span>
-                    <h3 className="text-base font-bold text-white group-hover:text-[#ff5733] transition line-clamp-1">
+                    <h3
+                      className={`line-clamp-1 text-base font-semibold text-white transition ${theme.titleHover}`}
+                    >
                       {a.title}
                     </h3>
                   </div>
 
                   <span
-                    className={`px-2.5 py-1 rounded text-[10px] font-mono uppercase font-semibold ${
-                      a.status === "ACTIVE"
-                        ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-300"
-                        : a.status === "COMPLETED"
-                        ? "bg-indigo-500/10 border border-indigo-500/30 text-indigo-300"
-                        : "bg-amber-500/10 border border-amber-500/30 text-amber-300"
+                    className={`shrink-0 rounded border px-2.5 py-1 font-mono text-[10px] font-semibold uppercase ${
+                      STATUS_BADGE[a.status] ?? DEFAULT_BADGE
                     }`}
                   >
                     {a.status}
                   </span>
                 </div>
 
-                <p className="text-xs text-zinc-400 line-clamp-2 leading-relaxed">
+                <p className="line-clamp-2 text-xs leading-relaxed text-zinc-400">
                   {a.description}
                 </p>
 
-                <div className="pt-2 border-t border-white/[0.04] flex items-center justify-between text-xs font-mono">
-                  <span className="text-zinc-500 truncate max-w-[200px]">
-                    {role === "client" ? `Worker: ${a.worker_address.slice(0, 10)}...` : `Klien: ${a.client_address.slice(0, 10)}...`}
+                <div className="flex items-center justify-between border-t border-white/[0.06] pt-3 font-mono text-xs">
+                  <span className="max-w-[200px] truncate text-zinc-500">
+                    {role === "client"
+                      ? `Worker: ${a.worker_address.slice(0, 10)}...`
+                      : `Klien: ${a.client_address.slice(0, 10)}...`}
                   </span>
-                  <span className="flex items-center gap-1 text-[#ff5733] group-hover:translate-x-1 transition">
+                  <span
+                    className={`flex items-center gap-1 transition group-hover:translate-x-1 ${theme.text}`}
+                  >
                     RINCIAN <ArrowUpRight className="h-3.5 w-3.5" />
                   </span>
                 </div>
